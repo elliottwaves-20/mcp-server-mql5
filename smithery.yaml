@@ -1,0 +1,8 @@
+# Smithery Configuration
+version: 1
+project:
+  name: mcp-server-mql5
+  description: "MCP server for MQL5 development: Compiles code and searches official documentation."
+  instructions: |
+    To use this server, you need to have MetaTrader 5 installed.
+    Set the environment variable 'MQL5_EDITOR_PATH' to your metaeditor64.exe.
