@@ -6,10 +6,29 @@ import sys
 import requests
 from bs4 import BeautifulSoup
 import urllib.parse
+import glob
+
+# --- AUTO-DETECTION FUNKTION ---
+def find_metaeditor():
+    """
+    Sucht automatisch nach metaeditor64.exe in gängigen MT5-Installationspfaden.
+    """
+    search_patterns = [
+        r"C:\Program Files\MetaTrader 5*\metaeditor64.exe",
+        r"C:\Program Files (x86)\MetaTrader 5*\metaeditor64.exe",
+        os.path.expanduser(r"~\AppData\Roaming\MetaQuotes\Terminal\*\metaeditor64.exe")
+    ]
+    
+    for pattern in search_patterns:
+        matches = glob.glob(pattern)
+        if matches:
+            return matches[0]  # Nimmt die erste gefundene Installation
+    
+    return None
 
 # --- KONFIGURATION ---
-# Liest den Pfad aus der Config oder Umgebungsvariable
-METAEDITOR_PATH = os.getenv("MQL5_EDITOR_PATH")
+# Liest den Pfad aus der Config oder nutzt Auto-Detection
+METAEDITOR_PATH = os.getenv("MQL5_EDITOR_PATH") or find_metaeditor()
 # ---------------------
 
 mcp = FastMCP("MQL5 Developer Suite")
@@ -21,7 +40,18 @@ def compile_mql5(code: str, filename: str = "ExpertAdvisor") -> str:
     und Warnungen aus dem Log zurück.
     """
     if not METAEDITOR_PATH:
-        return "KONFIGURATIONS-FEHLER: Die Umgebungsvariable 'MQL5_EDITOR_PATH' ist nicht gesetzt."
+        return """KONFIGURATIONS-FEHLER: MetaEditor wurde nicht gefunden.
+
+Bitte setzen Sie 'MQL5_EDITOR_PATH' in Ihrer MCP-Config:
+
+Häufige Pfade:
+- C:\\Program Files\\MetaTrader 5 [IHR_BROKER]\\metaeditor64.exe
+- C:\\Program Files (x86)\\MetaTrader 5 [IHR_BROKER]\\metaeditor64.exe
+
+So finden Sie Ihren Pfad:
+1. Rechtsklick auf MetaEditor → Eigenschaften → "Ziel" kopieren
+2. In claude_desktop_config.json unter "MQL5_EDITOR_PATH" eintragen
+"""
     
     if not os.path.exists(METAEDITOR_PATH):
         return f"PFAD-FEHLER: MetaEditor nicht gefunden unter:\n{METAEDITOR_PATH}\nBitte Pfad prüfen."
