@@ -153,5 +153,8 @@ def search_mql5_docs(search_term: str) -> str:
     except Exception as e:
         return f"Fehler beim Abruf der Dokumentation: {str(e)}"
 
-if __name__ == "__main__":
+def main():
     mcp.run()
+
+if __name__ == "__main__":
+    main()
