@@ -41,29 +41,22 @@ Add this to your configuration file (e.g., `claude_desktop_config.json`):
 }
 ```
 
-**⚠️ WICHTIG - MetaEditor Pfad konfigurieren:**
+**⚠️ IMPORTANT - Configure MetaEditor Path:**
 
-Der Server versucht automatisch, Ihre MetaEditor-Installation zu finden. Falls dies fehlschlägt, setzen Sie den Pfad manuell:
+The server automatically attempts to find your MetaEditor installation. If this fails, set the path manually:
 
-**So finden Sie Ihren Pfad:**
-1. Rechtsklick auf MetaEditor-Verknüpfung → **Eigenschaften** → Reiter "Verknüpfung"
-2. Kopieren Sie den vollständigen Pfad aus dem Feld **"Ziel"**
-3. Fügen Sie ihn in die Config ein (Backslashes verdoppeln: `\\`)
+**How to find your path:**
+1. Right-click on the MetaEditor shortcut → **Properties** → **"Shortcut"** tab
+2. Copy the full path from the **"Target"** field
+3. Paste it into the config (double the backslashes: `\\`)
 
-**Häufige Pfade:**
+**Common Paths:**
 - `C:\\Program Files\\MetaTrader 5 IC Markets\\metaeditor64.exe`
 - `C:\\Program Files\\MetaTrader 5 XM\\metaeditor64.exe`
 - `C:\\Program Files (x86)\\MetaTrader 5\\metaeditor64.exe`
 
-**Beispiel mit manuellem Pfad:**
+**Example with manual path:**
 ```json
 "env": {
   "MQL5_EDITOR_PATH": "C:\\Program Files\\MetaTrader 5 IC Markets\\metaeditor64.exe"
 }
-```
-
-**Testen der Installation:**
-Starte Claude Desktop neu und frage:
-> "Compile this MQL5 code: `void OnStart() { Print("Test"); }`"
-
-Bei Erfolg solltest du Compiler-Output sehen.
