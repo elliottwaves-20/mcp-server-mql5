@@ -1,13 +1,15 @@
 [project]
 name = "mcp-server-mql5"
-version = "0.1.2"
-description = "A MCP server for MQL5 development: Compiles code locally via MetaEditor and searches official docs."
+version = "0.2.0"
+description = "A MCP server for MQL5 development: Compiles code locally via MetaEditor and looks up the MQL5 reference through Context7."
 readme = "README.md"
 requires-python = ">=3.10"
+# The upper bound on mcp is deliberate: 2.x renamed FastMCP to MCPServer, so 1.x
+# and 2.x are not interchangeable. Without the bound, an install would silently
+# pull a version the code cannot run on.
 dependencies = [
-    "mcp>=0.1.0",
-    "requests>=2.31.0",
-    "beautifulsoup4>=4.12.0"
+    "mcp>=2,<3",
+    "requests>=2.31.0"
 ]
 
 [project.scripts]

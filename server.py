@@ -1,160 +1,154 @@
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 import subprocess
 import os
 import tempfile
-import sys
 import requests
-from bs4 import BeautifulSoup
-import urllib.parse
 import glob
 
-# --- AUTO-DETECTION FUNKTION ---
+# --- AUTO-DETECTION ---
 def find_metaeditor():
     """
-    Sucht automatisch nach metaeditor64.exe in gängigen MT5-Installationspfaden.
+    Searches common MetaTrader 5 installation paths for metaeditor64.exe.
     """
     search_patterns = [
         r"C:\Program Files\MetaTrader 5*\metaeditor64.exe",
         r"C:\Program Files (x86)\MetaTrader 5*\metaeditor64.exe",
-        os.path.expanduser(r"~\AppData\Roaming\MetaQuotes\Terminal\*\metaeditor64.exe")
+        os.path.expanduser(r"~\AppData\Roaming\MetaQuotes\Terminal\*\metaeditor64.exe"),
     ]
-    
+
     for pattern in search_patterns:
         matches = glob.glob(pattern)
         if matches:
-            return matches[0]  # Nimmt die erste gefundene Installation
-    
+            return matches[0]  # First installation found
+
     return None
 
-# --- KONFIGURATION ---
-# Liest den Pfad aus der Config oder nutzt Auto-Detection
-METAEDITOR_PATH = os.getenv("MQL5_EDITOR_PATH") or find_metaeditor()
-# ---------------------
 
-mcp = FastMCP("MQL5 Developer Suite")
+# --- CONFIGURATION ---
+METAEDITOR_PATH = os.getenv("MQL5_EDITOR_PATH") or find_metaeditor()
+
+# Documentation lookups go through Context7, which serves the MQL5 reference as a
+# pre-indexed library. The ID and the API host stay configurable so the server
+# keeps working if the library is renamed or a self-hosted instance is used.
+CONTEXT7_BASE_URL = os.getenv("CONTEXT7_BASE_URL", "https://context7.com/api/v1")
+CONTEXT7_LIBRARY = os.getenv("MQL5_DOCS_LIBRARY", "/websites/mql5docs_onrender")
+
+# Optional. Without a key the public rate limit applies, which is enough for
+# occasional lookups but throttles quickly during a longer session.
+CONTEXT7_API_KEY = os.getenv("CONTEXT7_API_KEY")
+
+DEFAULT_DOC_TOKENS = 5000
+
+mcp = MCPServer("MQL5 Developer Suite")
+
 
 @mcp.tool()
 def compile_mql5(code: str, filename: str = "ExpertAdvisor") -> str:
     """
-    Kompiliert MQL5 Code über den MetaEditor und gibt die GENAUEN Fehlermeldungen 
-    und Warnungen aus dem Log zurück.
+    Compiles MQL5 code with the local MetaEditor and returns the exact errors
+    and warnings from the compiler log, including line and column numbers.
     """
     if not METAEDITOR_PATH:
-        return """KONFIGURATIONS-FEHLER: MetaEditor wurde nicht gefunden.
+        return """CONFIGURATION ERROR: MetaEditor was not found.
 
-Bitte setzen Sie 'MQL5_EDITOR_PATH' in Ihrer MCP-Config:
+Set 'MQL5_EDITOR_PATH' in your MCP configuration:
 
-Häufige Pfade:
-- C:\\Program Files\\MetaTrader 5 [IHR_BROKER]\\metaeditor64.exe
-- C:\\Program Files (x86)\\MetaTrader 5 [IHR_BROKER]\\metaeditor64.exe
+Common paths:
+- C:\\Program Files\\MetaTrader 5 [YOUR_BROKER]\\metaeditor64.exe
+- C:\\Program Files (x86)\\MetaTrader 5 [YOUR_BROKER]\\metaeditor64.exe
 
-So finden Sie Ihren Pfad:
-1. Rechtsklick auf MetaEditor → Eigenschaften → "Ziel" kopieren
-2. In claude_desktop_config.json unter "MQL5_EDITOR_PATH" eintragen
+How to find your path:
+1. Right-click the MetaEditor shortcut -> Properties -> copy the "Target" field
+2. Add it to your MCP configuration as "MQL5_EDITOR_PATH"
 """
-    
+
     if not os.path.exists(METAEDITOR_PATH):
-        return f"PFAD-FEHLER: MetaEditor nicht gefunden unter:\n{METAEDITOR_PATH}\nBitte Pfad prüfen."
+        return f"PATH ERROR: MetaEditor not found at:\n{METAEDITOR_PATH}\nPlease check the path."
 
     with tempfile.TemporaryDirectory() as temp_dir:
         mq5_file = os.path.join(temp_dir, f"{filename}.mq5")
         log_file = os.path.join(temp_dir, f"{filename}.log")
-        
+
         try:
             with open(mq5_file, "w", encoding="utf-8") as f:
                 f.write(code)
         except Exception as e:
-            return f"SCHREIB-FEHLER: {str(e)}"
-            
+            return f"WRITE ERROR: {str(e)}"
+
         try:
-            # Headless Kompilierung
-            subprocess.run([METAEDITOR_PATH, f"/compile:{mq5_file}", f"/log:{log_file}"], check=False)
+            # Headless compilation
+            subprocess.run(
+                [METAEDITOR_PATH, f"/compile:{mq5_file}", f"/log:{log_file}"],
+                check=False,
+            )
         except Exception as e:
-            return f"AUSFÜHRUNGS-FEHLER: {str(e)}"
+            return f"EXECUTION ERROR: {str(e)}"
 
         if os.path.exists(log_file):
             try:
-                # Versuch UTF-16 (Standard bei MT5)
+                # MetaEditor writes UTF-16 logs
                 with open(log_file, "r", encoding="utf-16") as f:
                     return f.read()
             except UnicodeError:
-                # Fallback auf UTF-8
                 with open(log_file, "r", encoding="utf-8", errors="replace") as f:
-                    return f"LOG-ENCODING WARNUNG:\n{f.read()}"
+                    return f"LOG ENCODING WARNING:\n{f.read()}"
         else:
-            return "FEHLER: Keine Log-Datei erstellt."
+            return "ERROR: No log file was created."
+
 
 @mcp.tool()
-def search_mql5_docs(search_term: str) -> str:
+def search_mql5_docs(search_term: str, max_tokens: int = DEFAULT_DOC_TOKENS) -> str:
     """
-    Sucht via DuckDuckGo präzise in der offiziellen MQL5-Dokumentation (Reference)
-    und gibt den Inhalt der passenden Seite zurück.
+    Looks up the official MQL5 reference through Context7 and returns the
+    matching sections, including function signatures, parameters and examples.
+
+    Ask one concept per call ("OrderSend", "ArrayResize", "MqlTradeRequest").
+    Raise max_tokens for broader topics, lower it to save context.
     """
-    # Wir nutzen DuckDuckGo HTML für eine robuste Suche ohne API-Keys
-    # Der Filter "site:mql5.com/en/docs" erzwingt Ergebnisse nur aus der Doku
-    query = f"site:mql5.com/en/docs {search_term}"
-    ddg_url = "https://html.duckduckgo.com/html/"
-    
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
-        "Referer": "https://html.duckduckgo.com/"
-    }
+    url = f"{CONTEXT7_BASE_URL}{CONTEXT7_LIBRARY}"
+    params = {"type": "txt", "topic": search_term, "tokens": max_tokens}
+    headers = {"User-Agent": "mcp-server-mql5"}
+    if CONTEXT7_API_KEY:
+        headers["Authorization"] = f"Bearer {CONTEXT7_API_KEY}"
 
     try:
-        # 1. Suche ausführen
-        response = requests.post(ddg_url, data={'q': query}, headers=headers)
-        if response.status_code != 200:
-            return f"Such-Fehler: Status Code {response.status_code}"
-        
-        soup = BeautifulSoup(response.text, 'html.parser')
-        
-        # 2. Den ersten passenden Link extrahieren
-        # DuckDuckGo HTML Results sind meist in 'a.result__a'
-        target_link = None
-        for link in soup.select("a.result__a"):
-            href = link.get('href')
-            if href and "mql5.com/en/docs" in href:
-                # DDG Links müssen oft dekodiert werden (aus dem 'uddg' Parameter)
-                if "uddg=" in href:
-                    parsed = urllib.parse.parse_qs(urllib.parse.urlparse(href).query)
-                    target_link = parsed.get('uddg', [None])[0]
-                else:
-                    target_link = href
-                break
-        
-        if not target_link:
-            return f"Keine Dokumentation für '{search_term}' gefunden. (Query: {query})"
+        response = requests.get(url, params=params, headers=headers, timeout=30)
+    except requests.RequestException as e:
+        return f"Documentation lookup failed: {str(e)}"
 
-        # 3. Die gefundene Dokumentationsseite laden
-        doc_response = requests.get(target_link, headers=headers)
-        doc_soup = BeautifulSoup(doc_response.text, 'html.parser')
-        
-        # 4. Inhalt extrahieren
-        # MQL5 Docs haben den Inhalt oft in div class="doc-content" oder id="content"
-        content_div = doc_soup.find("div", class_="doc-content") or \
-                      doc_soup.find("div", id="content") or \
-                      doc_soup.find("body")
+    # The status codes are reported separately because each one calls for a
+    # different reaction, and a bare number tells the model nothing.
+    if response.status_code == 401:
+        return (
+            "Context7 rejected the API key (401). Check CONTEXT7_API_KEY in your MCP "
+            "configuration, or remove it to use the public rate limit."
+        )
+    if response.status_code == 429:
+        return (
+            "Context7 rate limit reached (429). Set CONTEXT7_API_KEY in your MCP "
+            "configuration for a higher limit, or retry in a moment."
+        )
+    if response.status_code == 404:
+        return (
+            f"Context7 does not know the library '{CONTEXT7_LIBRARY}' (404). "
+            "Override it with MQL5_DOCS_LIBRARY if the library was renamed."
+        )
+    if response.status_code != 200:
+        return f"Documentation lookup failed with status code {response.status_code}."
 
-        if not content_div:
-            return f"Seite gefunden ({target_link}), aber Inhalt konnte nicht extrahiert werden."
+    text = response.text.strip()
+    if not text or text.lower().startswith("no content"):
+        return (
+            f"No documentation found for '{search_term}'. Try a single MQL5 identifier "
+            "such as 'OrderSend', 'ArrayResize' or 'MqlTradeRequest'."
+        )
 
-        # Unnötige Elemente entfernen (Navigation, Footer, Skripte)
-        for junk in content_div(["script", "style", "nav", "footer", "header", "form"]):
-            junk.decompose()
+    return f"SOURCE: Context7 {CONTEXT7_LIBRARY}\n\n{text}"
 
-        text_content = content_div.get_text(separator="\n", strip=True)
-        
-        # Kürzen um Token zu sparen, falls der Artikel extrem lang ist
-        if len(text_content) > 12000:
-             text_content = text_content[:12000] + "\n... [Text gekürzt für bessere Lesbarkeit]"
-
-        return f"QUELLE: {target_link}\n\n{text_content}"
-
-    except Exception as e:
-        return f"Fehler beim Abruf der Dokumentation: {str(e)}"
 
 def main():
     mcp.run()
+
 
 if __name__ == "__main__":
     main()
