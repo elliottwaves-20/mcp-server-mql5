@@ -22,3 +22,6 @@ build-backend = "hatchling.build"
 # --- WICHTIGE ERGÄNZUNG FÜR FLACHE STRUKTUR ---
 [tool.hatch.build.targets.wheel]
 packages = ["."]
+
+[tool.uv]
+exclude-newer = "7 days"
